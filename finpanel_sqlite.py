@@ -4,8 +4,27 @@ from datetime import datetime
 import webbrowser
 import threading
 import sqlite3
+import hashlib
+import hmac
+import secrets
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+
+def gerar_hash_senha(senha):
+    """Gera hash PBKDF2-SHA256 com salt aleatório (senha nunca fica em texto puro)."""
+    salt = secrets.token_hex(16)
+    digest = hashlib.pbkdf2_hmac("sha256", senha.encode("utf-8"), bytes.fromhex(salt), 200_000).hex()
+    return f"pbkdf2${salt}${digest}"
+
+
+def verificar_senha(senha, armazenado):
+    try:
+        _, salt, digest = armazenado.split("$")
+    except ValueError:
+        return False
+    calculado = hashlib.pbkdf2_hmac("sha256", senha.encode("utf-8"), bytes.fromhex(salt), 200_000).hex()
+    return hmac.compare_digest(calculado, digest)
+
 
 class AppControleFinanceiro:
     def __init__(self, root):
@@ -135,13 +154,14 @@ class AppControleFinanceiro:
             if self.cursor.fetchone():
                 messagebox.showerror("Erro de Cadastro", "Este e-mail já está cadastrado.")
                 return
-            self.cursor.execute("INSERT INTO usuarios (email, senha) VALUES (?, ?)", (email, senha))
+            self.cursor.execute("INSERT INTO usuarios (email, senha) VALUES (?, ?)", (email, gerar_hash_senha(senha)))
             self.conexao.commit()
             messagebox.showinfo("Sucesso", "Conta criada! Faça login para acessar.")
             self.alternar_modo_auth(None)
         else:
-            self.cursor.execute("SELECT id FROM usuarios WHERE email = ? AND senha = ?", (email, senha))
-            usuario = self.cursor.fetchone()
+            self.cursor.execute("SELECT id, senha FROM usuarios WHERE email = ?", (email,))
+            registro = self.cursor.fetchone()
+            usuario = registro if registro and verificar_senha(senha, registro[1]) else None
             if usuario:
                 self.usuario_logado_id = usuario[0]
                 self.frame_login.destroy()
@@ -686,27 +706,9 @@ class AppControleFinanceiro:
 
     def disparar_cobranca_real(self):
         selecionado = self.tree_inad.selection()
-        def renderizar_inadimplencia(self):
-         for widget in self.aba_inadimplencia.winfo_children(): widget.destroy()
-        frame_lista = tk.LabelFrame(self.aba_inadimplencia, text=" Clientes com Títulos em Atraso ", font=("Arial", 11, "bold"), bg="white", padx=10, pady=10)
-        frame_lista.pack(fill="both", expand=True, padx=10, pady=10)
-        
-        self.tree_inad = ttk.Treeview(frame_lista, columns=("id", "cliente", "valor", "vencimento"), show="headings")
-        self.tree_inad.heading("id", text="ID"); self.tree_inad.heading("cliente", text="Cliente"); self.tree_inad.heading("valor", text="Valor"); self.tree_inad.heading("vencimento", text="Vencimento")
-        self.tree_inad.pack(side="left", fill="both", expand=True)
-        
-        self.cursor.execute("SELECT id, descricao, valor, vencimento FROM contas_receber WHERE usuario_id = ?", (self.usuario_logado_id,))
-        for r in self.cursor.fetchall():
-            try:
-                if datetime.strptime(r[3], "%d/%m/%Y") < datetime.now():
-                    self.tree_inad.insert("", "end", values=(r[0], r[1], f"R$ {r[2]:,.2f}", r[3]))
-            except: pass
-        ttk.Button(self.aba_inadimplencia, text="Disparar Cobrança via WhatsApp", command=self.disparar_cobranca_real).pack(pady=10)
-
-    # COLE AQUI POR CIMA DA ANTIGA:
-    def disparar_cobranca_real(self):
-        selecionado = self.tree_inad.selection()
-        
+        if not selecionado:
+            messagebox.showwarning("Aviso", "Selecione um título em atraso para cobrar.")
+            return
         if selecionado: 
             valores = self.tree_inad.item(selecionado, "values")
             _, cliente, valor_devido, data_venc = valores
@@ -716,7 +718,6 @@ class AppControleFinanceiro:
                 msg = f"Olá {cliente}, identificamos uma pendência no valor de {valor_devido} vencida em {data_venc}."
                 webbrowser.open(f"https://web.whatsapp.com/send?phone=55{num_limpo}&text={msg.replace(' ', '%20')}")
 
-# FINAL DO ARQUIVO (Sem espaços no início destas linhas abaixo):
 if __name__ == "__main__":
     root = tk.Tk()
     app = AppControleFinanceiro(root)
